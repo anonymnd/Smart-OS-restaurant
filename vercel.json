@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "dist/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/assets/(.*)",
+      "dest": "/dist/assets/$1"
+    },
+    {
+      "src": "/favicon.svg",
+      "dest": "/dist/favicon.svg"
+    },
+    {
+      "src": "/(state|decision|events|integrations|cameras|sensors|model|cv|vision|orders|settings|reports|audit|connectors|tasks|layout|staffing|scenarios|tick|reset|health|docs|openapi.json)(.*)",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/dist/index.html"
+    }
+  ],
+  "functions": {
+    "api/index.py": {
+      "excludeFiles": "{node_modules,demo_gif_frames,demo_video_capture,pitch_previews,pitch_fr_previews}/**"
+    }
+  }
+}
