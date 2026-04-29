@@ -546,6 +546,10 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
   const [selectedCamera, setSelectedCamera] = useState("CAM-DINING-01");
   const [deviceStream, setDeviceStream] = useState(null);
   const [deviceError, setDeviceError] = useState("");
+  const [deviceModel, setDeviceModel] = useState(null);
+  const [deviceDetections, setDeviceDetections] = useState([]);
+  const [deviceInsight, setDeviceInsight] = useState(null);
+  const [deviceAnalyzing, setDeviceAnalyzing] = useState(false);
   const [virtualFeed, setVirtualFeed] = useState({
     id: "CAM-VIRTUAL-01",
     name: "Virtual entrance camera",
@@ -617,6 +621,69 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
   function stopDeviceCamera() {
     deviceStream?.getTracks().forEach((track) => track.stop());
     setDeviceStream(null);
+    setDeviceDetections([]);
+    setDeviceInsight(null);
+    setDeviceAnalyzing(false);
+  }
+
+  function buildDeviceInsight(predictions) {
+    const people = predictions.filter((item) => item.class === "person");
+    const chairs = predictions.filter((item) => item.class === "chair");
+    const tables = predictions.filter((item) => item.class === "dining table");
+    const orderObjects = predictions.filter((item) => ["cup", "bottle", "bowl", "fork", "knife", "spoon", "wine glass"].includes(item.class));
+    const seatedEstimate = Math.min(people.length, Math.max(chairs.length, tables.length * 2));
+    const standingEstimate = Math.max(0, people.length - seatedEstimate);
+    const orderedSignal = people.length > 0 && tables.length > 0 && orderObjects.length > 0;
+    const queueRisk = standingEstimate >= 4 ? "HIGH" : standingEstimate >= 2 ? "MEDIUM" : "LOW";
+    const tableServiceSignal = orderedSignal
+      ? "People near dining tables with cups/plates: likely ordered or currently eating."
+      : people.length && tables.length
+        ? "People near tables but few table objects detected: check if order is needed."
+        : "No clear table-service signal.";
+    return {
+      people: people.length,
+      seatedEstimate,
+      standingEstimate,
+      tables: tables.length,
+      chairs: chairs.length,
+      tableObjects: orderObjects.length,
+      orderedSignal,
+      queueRisk,
+      recommendation: queueRisk === "HIGH"
+        ? "Entrance/waiting pressure is high. Assign host support."
+        : orderedSignal
+          ? "Monitor tables for food-running or check-back tasks."
+          : "Keep camera scanning; no urgent camera-derived action."
+    };
+  }
+
+  async function analyzeDeviceCamera() {
+    if (!deviceVideoRef.current) return;
+    setDeviceError("");
+    setDeviceAnalyzing(true);
+    try {
+      const model = deviceModel || await import("@tensorflow-models/coco-ssd").then((module) => module.load({ base: "lite_mobilenet_v2" }));
+      setDeviceModel(model);
+      const predictions = await model.detect(deviceVideoRef.current);
+      const videoWidth = deviceVideoRef.current.videoWidth || 1280;
+      const videoHeight = deviceVideoRef.current.videoHeight || 720;
+      const useful = predictions
+        .filter((item) => item.score >= 0.45 && ["person", "chair", "dining table", "cup", "bottle", "bowl", "fork", "knife", "spoon", "wine glass"].includes(item.class))
+        .map((item) => ({
+          label: item.class,
+          confidence: item.score,
+          x: (item.bbox[0] / videoWidth) * 100,
+          y: (item.bbox[1] / videoHeight) * 100,
+          w: (item.bbox[2] / videoWidth) * 100,
+          h: (item.bbox[3] / videoHeight) * 100
+        }));
+      setDeviceDetections(useful);
+      setDeviceInsight(buildDeviceInsight(predictions.filter((item) => item.score >= 0.45)));
+    } catch (err) {
+      setDeviceError(err.message || "Device camera AI analysis failed.");
+    } finally {
+      setDeviceAnalyzing(false);
+    }
   }
 
   function updateVirtual(field, value) {
@@ -633,6 +700,7 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
           <div className="button-group">
             <button onClick={startDeviceCamera}><MonitorCog size={16} /> Device camera</button>
             {deviceStream ? <button onClick={stopDeviceCamera}><XCircle size={16} /> Stop</button> : null}
+            {deviceStream ? <button className="primary-button" onClick={analyzeDeviceCamera}><Sparkles size={16} /> {deviceAnalyzing ? "Analyzing..." : "Analyze people"}</button> : null}
             <button disabled={!activeFeed} onClick={() => actions.analyzeCamera(selectedCamera)}><Sparkles size={16} /> Analyze frame</button>
             <button disabled={!activeFeed?.video_url} onClick={() => actions.cvAnalyze(activeFeed?.video_url, selectedCamera)}><Camera size={16} /> CV adapter</button>
             <button onClick={() => actions.trainCameraBrain()}><Gauge size={16} /> Train brain</button>
@@ -644,6 +712,17 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
           <div className="camera-player">
             <video ref={deviceVideoRef} autoPlay muted playsInline />
             <div className="live-camera-badge">LIVE DEVICE CAMERA</div>
+            <div className="detection-layer">
+              {deviceDetections.map((box, index) => (
+                <span
+                  key={`${box.label}-${index}`}
+                  className="detection-box"
+                  style={{ left: `${box.x}%`, top: `${box.y}%`, width: `${box.w}%`, height: `${box.h}%` }}
+                >
+                  {box.label} {Math.round(box.confidence * 100)}%
+                </span>
+              ))}
+            </div>
           </div>
         ) : activeFeed ? (
           <div className="camera-player">
@@ -662,6 +741,17 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
           </div>
         ) : <EmptyState icon={Camera} title="No video feed selected" text="Start the device camera or paste a legal video URL in Camera Feed Studio. The old stock videos were removed." />}
         {deviceError ? <p className="form-error camera-error">{deviceError}</p> : null}
+        {deviceInsight ? (
+          <div className="device-insight-grid">
+            <MetricCard label="People" value={deviceInsight.people} detail={`${deviceInsight.seatedEstimate} seated est., ${deviceInsight.standingEstimate} standing est.`} icon={Users} tone="blue" />
+            <MetricCard label="Tables seen" value={deviceInsight.tables} detail={`${deviceInsight.tableObjects} cups/plates/bottles`} icon={Utensils} tone="green" />
+            <MetricCard label="Queue risk" value={deviceInsight.queueRisk} detail={deviceInsight.recommendation} icon={AlertTriangle} tone={deviceInsight.queueRisk === "HIGH" ? "red" : "amber"} />
+            <div className="camera-ai-note">
+              <b>{deviceInsight.orderedSignal ? "Ordered/eating signal detected" : "No strong ordered signal"}</b>
+              <span>{deviceInsight.orderedSignal ? "The model sees people near dining tables plus table objects like cups/bowls/bottles." : "Point the camera toward tables; cups/plates/bowls improve the signal."}</span>
+            </div>
+          </div>
+        ) : null}
       </section>
       <section className="panel">
         <div className="panel-header"><h2>Feeds</h2></div>

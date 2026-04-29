@@ -1231,6 +1231,32 @@ th {
   margin-top: 12px;
 }
 
+.device-insight-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.camera-ai-note {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+}
+
+.camera-ai-note b {
+  color: #14532d;
+}
+
+.camera-ai-note span {
+  color: #3f5d48;
+  font-size: 13px;
+}
+
 .source-catalog {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1507,6 +1533,7 @@ th {
   .reality-grid,
   .source-catalog,
   .studio-grid,
+  .device-insight-grid,
   .analysis-summary {
     grid-template-columns: 1fr;
   }
