@@ -544,6 +544,8 @@ function SensorsPage({ state, decision, modelStatus, sensorFeed, connectors, act
 
 function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
   const [selectedCamera, setSelectedCamera] = useState("CAM-DINING-01");
+  const [deviceStream, setDeviceStream] = useState(null);
+  const [deviceError, setDeviceError] = useState("");
   const [virtualFeed, setVirtualFeed] = useState({
     id: "CAM-VIRTUAL-01",
     name: "Virtual entrance camera",
@@ -558,6 +560,65 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
   const feeds = cameraFeeds?.feeds || [];
   const activeFeed = feeds.find((feed) => feed.id === selectedCamera) || feeds[0];
   const detections = cameraAnalysis?.camera_id === selectedCamera ? cameraAnalysis.detections || [] : [];
+  const deviceVideoRef = React.useRef(null);
+  const sourceCatalog = [
+    {
+      name: "Use this device camera",
+      type: "Best live demo",
+      url: "",
+      detail: "Open the app on a phone/tablet and allow camera access. No CCTV API needed."
+    },
+    {
+      name: "Pexels restaurant videos",
+      type: "Better legal clips",
+      url: "https://www.pexels.com/search/videos/restaurant%20people/",
+      detail: "Download a clip, host it, then paste its video URL into Studio."
+    },
+    {
+      name: "Pixabay restaurant people",
+      type: "Royalty-free library",
+      url: "https://pixabay.com/videos/search/restaurant%20people/",
+      detail: "Large free library; useful for dining, queue, and kitchen demo clips."
+    },
+    {
+      name: "MIVIA people counting",
+      type: "Research dataset",
+      url: "https://mivia.unisa.it/people-detection-dataset/",
+      detail: "Overhead people-counting footage, better for entrance/queue logic than restaurant stock."
+    },
+    {
+      name: "OpenDataCam",
+      type: "Real CV path",
+      url: "https://opendatacam.org/",
+      detail: "Run local YOLO counting from a camera/video and send metadata to this backend."
+    }
+  ];
+
+  useEffect(() => {
+    if (deviceVideoRef.current && deviceStream) {
+      deviceVideoRef.current.srcObject = deviceStream;
+    }
+  }, [deviceStream]);
+
+  async function startDeviceCamera() {
+    setDeviceError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      });
+      setDeviceStream(stream);
+      setCameraAnalysis(null);
+    } catch (err) {
+      setDeviceError(err.message || "Camera permission was denied.");
+    }
+  }
+
+  function stopDeviceCamera() {
+    deviceStream?.getTracks().forEach((track) => track.stop());
+    setDeviceStream(null);
+  }
+
   function updateVirtual(field, value) {
     setVirtualFeed((feed) => ({ ...feed, [field]: value }));
   }
@@ -567,9 +628,11 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
         <div className="panel-header">
           <div>
             <h2>Camera Projection</h2>
-            <p>Real public restaurant videos with simulated AI overlays. Connect real RTSP/API feeds for production CV metadata.</p>
+            <p>Use a real device camera, consented footage, or better legal datasets. Avoid random public CCTV streams.</p>
           </div>
           <div className="button-group">
+            <button onClick={startDeviceCamera}><MonitorCog size={16} /> Device camera</button>
+            {deviceStream ? <button onClick={stopDeviceCamera}><XCircle size={16} /> Stop</button> : null}
             <button onClick={() => actions.analyzeCamera(selectedCamera)}><Sparkles size={16} /> Analyze frame</button>
             <button onClick={() => actions.cvAnalyze(activeFeed?.video_url, selectedCamera)}><Camera size={16} /> CV adapter</button>
             <button onClick={() => actions.trainCameraBrain()}><Gauge size={16} /> Train brain</button>
@@ -577,7 +640,12 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
             <button onClick={() => actions.simulateSensors()}><Wifi size={16} /> Push sensor events</button>
           </div>
         </div>
-        {activeFeed ? (
+        {deviceStream ? (
+          <div className="camera-player">
+            <video ref={deviceVideoRef} autoPlay muted playsInline />
+            <div className="live-camera-badge">LIVE DEVICE CAMERA</div>
+          </div>
+        ) : activeFeed ? (
           <div className="camera-player">
             <video key={activeFeed.id} src={activeFeed.video_url} autoPlay muted loop playsInline controls />
             <div className="detection-layer">
@@ -593,6 +661,7 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
             </div>
           </div>
         ) : <EmptyState icon={Camera} title="No camera feeds" text="Add a connector or use the bundled demo feeds." />}
+        {deviceError ? <p className="form-error camera-error">{deviceError}</p> : null}
       </section>
       <section className="panel">
         <div className="panel-header"><h2>Feeds</h2></div>
@@ -675,6 +744,24 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
             <MetricCard label="Twin updated" value={cameraAnalysis.applied_to_digital_twin ? "YES" : "NO"} detail={cameraAnalysis.generated_event?.event_type || "analysis only"} icon={Activity} tone={cameraAnalysis.applied_to_digital_twin ? "green" : "blue"} />
           </div>
         )}
+      </section>
+      <section className="panel full">
+        <div className="panel-header">
+          <div>
+            <h2>Better Camera Sources</h2>
+            <p>These are safer and more credible than random restaurant CCTV links.</p>
+          </div>
+        </div>
+        <div className="source-catalog">
+          {sourceCatalog.map((item) => (
+            <article key={item.name} className="source-card">
+              <StatusBadge tone={item.type.includes("Best") ? "green" : item.type.includes("dataset") ? "blue" : "amber"}>{item.type}</StatusBadge>
+              <h3>{item.name}</h3>
+              <p>{item.detail}</p>
+              {item.url ? <a href={item.url} target="_blank" rel="noreferrer">Open source <ChevronRight size={14} /></a> : <button onClick={startDeviceCamera}>Start camera</button>}
+            </article>
+          ))}
+        </div>
       </section>
       <section className="panel full">
         <div className="panel-header"><h2>Centralized Camera Brain</h2></div>

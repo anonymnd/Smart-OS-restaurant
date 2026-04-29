@@ -406,8 +406,8 @@ def camera_options() -> dict:
 @app.get("/cameras/feeds")
 def camera_feeds() -> dict:
     return {
-        "truth_note": "These are real public stock videos for UI/testing. The current app simulates detections; it does not run pixel-level CV inference yet.",
-        "production_path": "For real camera AI, connect RTSP/IP camera analytics via OpenDataCam, Axis People Counter API, Camlytics webhooks, or send YOLO/ByteTrack metadata to /sensors/webhook.",
+        "truth_note": "Best demo path is device camera or consented venue footage. Bundled videos are fallback visual fixtures; detections are simulated metadata.",
+        "production_path": "For real camera AI, use the device camera, a phone/IP camera through a local CV worker, OpenDataCam, Axis People Counter API, Camlytics webhooks, or send YOLO/ByteTrack metadata to /sensors/webhook.",
         "feeds": all_camera_feeds(),
     }
 
