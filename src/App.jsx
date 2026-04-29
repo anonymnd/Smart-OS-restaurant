@@ -552,10 +552,10 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
     zone: "Entrance",
     role: "entrance_count",
     source: "User video",
-    video_url: "https://assets.mixkit.co/videos/4385/4385-720.mp4",
-    license: "User-provided or public demo video",
+    video_url: "",
+    license: "User-provided, consented, or royalty-free video",
     page_url: "",
-    note: "Looped real video treated as a virtual live camera."
+    note: "Looped video treated as a virtual live camera."
   });
   const feeds = cameraFeeds?.feeds || [];
   const activeFeed = feeds.find((feed) => feed.id === selectedCamera) || feeds[0];
@@ -633,8 +633,8 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
           <div className="button-group">
             <button onClick={startDeviceCamera}><MonitorCog size={16} /> Device camera</button>
             {deviceStream ? <button onClick={stopDeviceCamera}><XCircle size={16} /> Stop</button> : null}
-            <button onClick={() => actions.analyzeCamera(selectedCamera)}><Sparkles size={16} /> Analyze frame</button>
-            <button onClick={() => actions.cvAnalyze(activeFeed?.video_url, selectedCamera)}><Camera size={16} /> CV adapter</button>
+            <button disabled={!activeFeed} onClick={() => actions.analyzeCamera(selectedCamera)}><Sparkles size={16} /> Analyze frame</button>
+            <button disabled={!activeFeed?.video_url} onClick={() => actions.cvAnalyze(activeFeed?.video_url, selectedCamera)}><Camera size={16} /> CV adapter</button>
             <button onClick={() => actions.trainCameraBrain()}><Gauge size={16} /> Train brain</button>
             <button onClick={() => actions.analyzeCameraBrain()}><Activity size={16} /> Analyze all</button>
             <button onClick={() => actions.simulateSensors()}><Wifi size={16} /> Push sensor events</button>
@@ -660,7 +660,7 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
               ))}
             </div>
           </div>
-        ) : <EmptyState icon={Camera} title="No camera feeds" text="Add a connector or use the bundled demo feeds." />}
+        ) : <EmptyState icon={Camera} title="No video feed selected" text="Start the device camera or paste a legal video URL in Camera Feed Studio. The old stock videos were removed." />}
         {deviceError ? <p className="form-error camera-error">{deviceError}</p> : null}
       </section>
       <section className="panel">
@@ -720,7 +720,7 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
               </select>
             </label>
             <label className="field full-field">Video URL
-              <input value={virtualFeed.video_url} onChange={(e) => updateVirtual("video_url", e.target.value)} placeholder="https://...mp4" />
+              <input value={virtualFeed.video_url} onChange={(e) => updateVirtual("video_url", e.target.value)} placeholder="Paste a direct .mp4/.webm URL, or use device camera above" />
             </label>
             <label className="field">Source
               <input value={virtualFeed.source} onChange={(e) => updateVirtual("source", e.target.value)} />
@@ -730,7 +730,15 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
             </label>
           </div>
           <div className="studio-preview">
-            <video key={virtualFeed.video_url} src={virtualFeed.video_url} autoPlay muted loop playsInline controls />
+            {virtualFeed.video_url ? (
+              <video key={virtualFeed.video_url} src={virtualFeed.video_url} autoPlay muted loop playsInline controls />
+            ) : (
+              <div className="empty-video-slot">
+                <Camera size={30} />
+                <b>No default video</b>
+                <span>Use device camera, your own recording, or a legal direct video URL.</span>
+              </div>
+            )}
             <div className="studio-note">
               <b>Safe demo path</b>
               <p>Use stock clips, your own recordings, or consented venue footage. Avoid random public CCTV streams because they are unstable and may expose private customers.</p>

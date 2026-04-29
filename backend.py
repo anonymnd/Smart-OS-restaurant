@@ -258,48 +258,17 @@ class WebSocketHub:
 HUB = WebSocketHub()
 
 
-DEMO_CAMERA_FEEDS = [
-    {
-        "id": "CAM-DINING-01",
-        "name": "Dining room overhead",
-        "zone": "Dining",
-        "role": "table_occupancy",
-        "kind": "public_stock_demo_video",
-        "source": "Mixkit",
-        "license": "Mixkit Stock Video Free License",
-        "page_url": "https://mixkit.co/free-stock-video/customers-in-a-minimalist-style-restaurant-4385/",
-        "video_url": "https://assets.mixkit.co/videos/4385/4385-720.mp4",
-        "note": "Real restaurant video used as demo feed; detections are simulated overlays.",
-    },
-    {
-        "id": "CAM-BAR-01",
-        "name": "Busy bar/service area",
-        "zone": "Service",
-        "role": "service_flow",
-        "kind": "public_stock_demo_video",
-        "source": "Mixkit",
-        "license": "Mixkit Stock Video Free License",
-        "page_url": "https://mixkit.co/free-stock-video/a-busy-elegant-bar-4043/",
-        "video_url": "https://assets.mixkit.co/videos/4043/4043-720.mp4",
-        "note": "Real bar/restaurant video used as demo feed; detections are simulated overlays.",
-    },
-    {
-        "id": "CAM-KITCHEN-01",
-        "name": "Kitchen production line",
-        "zone": "Kitchen",
-        "role": "kitchen_load",
-        "kind": "public_stock_demo_video",
-        "source": "Mixkit",
-        "license": "Mixkit Restricted License - personal-use demo clip",
-        "page_url": "https://mixkit.co/free-stock-video/professional-chefs-work-in-restaurant-kitchen-15875/",
-        "video_url": "https://assets.mixkit.co/videos/15875/15875-720.mp4",
-        "note": "Real kitchen video used as demo feed; not used for commercial redistribution.",
-    },
-]
+DEMO_CAMERA_FEEDS: list[dict[str, Any]] = []
+LEGACY_DEMO_VIDEO_HOSTS = ("assets.mixkit.co/videos/4385", "assets.mixkit.co/videos/4043", "assets.mixkit.co/videos/15875")
 
 
 def virtual_camera_feeds() -> list[dict[str, Any]]:
-    return get_settings("virtual_camera_feeds", [])
+    feeds = get_settings("virtual_camera_feeds", [])
+    return [
+        feed
+        for feed in feeds
+        if not any(host in feed.get("video_url", "") for host in LEGACY_DEMO_VIDEO_HOSTS)
+    ]
 
 
 def all_camera_feeds() -> list[dict[str, Any]]:
@@ -406,7 +375,7 @@ def camera_options() -> dict:
 @app.get("/cameras/feeds")
 def camera_feeds() -> dict:
     return {
-        "truth_note": "Best demo path is device camera or consented venue footage. Bundled videos are fallback visual fixtures; detections are simulated metadata.",
+        "truth_note": "No default restaurant stock videos are bundled now. Use device camera, consented venue footage, or paste a better legal source in Camera Feed Studio.",
         "production_path": "For real camera AI, use the device camera, a phone/IP camera through a local CV worker, OpenDataCam, Axis People Counter API, Camlytics webhooks, or send YOLO/ByteTrack metadata to /sensors/webhook.",
         "feeds": all_camera_feeds(),
     }
