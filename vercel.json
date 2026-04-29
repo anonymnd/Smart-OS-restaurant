@@ -20,7 +20,7 @@
       "dest": "/dist/favicon.svg"
     },
     {
-      "src": "/(state|decision|events|integrations|cameras|sensors|model|cv|vision|orders|settings|reports|audit|connectors|tasks|layout|staffing|scenarios|tick|reset|health|docs|openapi.json)(.*)",
+      "src": "/(auth|state|decision|events|integrations|cameras|sensors|model|cv|vision|orders|settings|reports|audit|connectors|tasks|layout|staffing|scenarios|tick|reset|health|docs|openapi.json)(.*)",
       "dest": "/api/index.py"
     },
     {
