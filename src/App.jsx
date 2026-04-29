@@ -662,6 +662,7 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
     setDeviceError("");
     setDeviceAnalyzing(true);
     try {
+      await import("@tensorflow/tfjs");
       const model = deviceModel || await import("@tensorflow-models/coco-ssd").then((module) => module.load({ base: "lite_mobilenet_v2" }));
       setDeviceModel(model);
       const predictions = await model.detect(deviceVideoRef.current);
