@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Smart Restaurant OS - Diagrammes</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 14mm;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      color: #172018;
+      background: #f5f3eb;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      line-height: 1.45;
+    }
+    .page {
+      min-height: 268mm;
+      padding: 24px 26px;
+      background: #fffef9;
+      break-after: page;
+      border: 1px solid #e4dfd0;
+    }
+    .page:last-child {
+      break-after: auto;
+    }
+    .cover {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 26px;
+      background:
+        linear-gradient(135deg, rgba(31, 121, 86, 0.16), transparent 38%),
+        linear-gradient(315deg, rgba(199, 91, 43, 0.16), transparent 42%),
+        #fffef9;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      padding: 7px 12px;
+      border-radius: 999px;
+      color: #14563d;
+      background: #dff2e7;
+      font-weight: 700;
+      font-size: 12px;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 0;
+      max-width: 780px;
+      font-size: 52px;
+      line-height: 1.02;
+      letter-spacing: 0;
+      color: #102319;
+    }
+    h2 {
+      margin: 0 0 8px;
+      font-size: 26px;
+      line-height: 1.15;
+      color: #102319;
+    }
+    h3 {
+      margin: 18px 0 8px;
+      font-size: 16px;
+      color: #2e4b3c;
+    }
+    p {
+      margin: 0;
+      max-width: 760px;
+      color: #4d5d53;
+      font-size: 14px;
+    }
+    .subtitle {
+      font-size: 19px;
+      color: #334b3e;
+    }
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin-top: 30px;
+    }
+    .meta div,
+    .note,
+    .schema {
+      border: 1px solid #ddd6c2;
+      border-radius: 8px;
+      background: #fbfaf4;
+      padding: 14px;
+    }
+    .meta b {
+      display: block;
+      margin-bottom: 4px;
+      color: #102319;
+      font-size: 13px;
+    }
+    .meta span {
+      color: #526158;
+      font-size: 13px;
+    }
+    .diagram-wrap {
+      margin-top: 14px;
+      padding: 14px;
+      border: 1px solid #ddd6c2;
+      border-radius: 8px;
+      background: #ffffff;
+      overflow: hidden;
+    }
+    .mermaid {
+      width: 100%;
+      text-align: center;
+    }
+    .schema {
+      margin-top: 12px;
+      white-space: pre-wrap;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 10.5px;
+      color: #24382e;
+      line-height: 1.32;
+    }
+    .small .mermaid svg {
+      max-height: 610px;
+    }
+    .wide .mermaid svg {
+      max-height: 680px;
+    }
+    .footer {
+      margin-top: 18px;
+      padding-top: 10px;
+      border-top: 1px solid #ebe5d6;
+      color: #7a7f78;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <section class="page cover">
+    <span class="badge">Dossier technique</span>
+    <h1>Smart Restaurant OS</h1>
+    <p class="subtitle">Diagrammes MCD, MLD, architecture, flux, états et déploiement pour l'application de gestion intelligente d'un restaurant.</p>
+    <div class="meta">
+      <div><b>Projet</b><span>Real-time AI Operations Engine</span></div>
+      <div><b>Technologies</b><span>React, FastAPI, IoT, IA, PostgreSQL</span></div>
+      <div><b>Version</b><span>Document de pitch et conception</span></div>
+    </div>
+  </section>
+
+  <section class="page wide">
+    <h2>1. MCD - Modèle Conceptuel de Données</h2>
+    <p>Ce modèle montre les entités principales du système et leurs relations métier.</p>
+    <div class="diagram-wrap">
+      <pre class="mermaid">
+erDiagram
+    RESTAURANT ||--o{ TABLE_RESTAURANT : contient
+    RESTAURANT ||--o{ ZONE : possede
+    ZONE ||--o{ TABLE_RESTAURANT : regroupe
+    CLIENT ||--o| TABLE_RESTAURANT : occupe
+    CLIENT ||--o{ EVENEMENT : genere
+    CLIENT ||--o{ COMMANDE : passe
+    TABLE_RESTAURANT ||--o{ EVENEMENT : subit
+    TABLE_RESTAURANT ||--o{ TACHE : necessite
+    TABLE_RESTAURANT ||--o{ COMMANDE : liee_a
+    PERSONNEL ||--o{ TACHE : execute
+    PERSONNEL ||--o{ EVENEMENT : confirme
+    CAMERA ||--o{ EVENEMENT : detecte
+    CAPTEUR ||--o{ EVENEMENT : envoie
+    COMMANDE ||--o{ ARTICLE_COMMANDE : contient
+    COMMANDE ||--o{ EVENEMENT : change_etat
+    TACHE ||--o{ DECISION_AI : justifiee_par
+    EVENEMENT ||--o{ DECISION_AI : alimente
+
+    RESTAURANT {
+        int id
+        string nom
+        string adresse
+    }
+    ZONE {
+        int id
+        string nom
+        string type
+    }
+    TABLE_RESTAURANT {
+        string id
+        int capacite
+        int position_x
+        int position_y
+        string etat
+    }
+    CLIENT {
+        int id
+        int taille_groupe
+        datetime heure_arrivee
+        string statut
+    }
+    PERSONNEL {
+        string id
+        string nom
+        string role
+        string statut
+    }
+    CAMERA {
+        string id
+        string nom
+        string zone
+        string flux_video
+    }
+    EVENEMENT {
+        int id
+        string type
+        datetime date_event
+        float confiance
+        string source
+    }
+    TACHE {
+        string id
+        string type
+        string priorite
+        float score
+        string statut
+    }
+    COMMANDE {
+        string id
+        datetime date_creation
+        string statut
+    }
+    DECISION_AI {
+        int id
+        float score_priorite
+        string explication
+    }
+      </pre>
+    </div>
+    <div class="footer">Smart Restaurant OS - Conception des données</div>
+  </section>
+
+  <section class="page">
+    <h2>2. MLD - Modèle Logique de Données</h2>
+    <p>Le MLD traduit le modèle conceptuel en tables relationnelles exploitables dans SQLite ou PostgreSQL.</p>
+    <div class="schema">RESTAURANT(id PK, nom, adresse)
+
+ZONE(id PK, restaurant_id FK -> RESTAURANT.id, nom, type)
+
+TABLE_RESTAURANT(id PK, zone_id FK -> ZONE.id, capacite, position_x, position_y, etat, client_id FK -> CLIENT.id NULL)
+
+CLIENT(id PK, taille_groupe, heure_arrivee, table_id FK -> TABLE_RESTAURANT.id NULL, statut, temps_attente)
+
+PERSONNEL(id PK, nom, role, position_x, position_y, statut, tache_actuelle_id FK -> TACHE.id NULL)
+
+CAMERA(id PK, nom, zone_id FK -> ZONE.id, flux_video, statut)
+
+CAPTEUR(id PK, type, zone_id FK -> ZONE.id, statut)
+
+EVENEMENT(id PK, type, source, confiance, date_event, client_id FK -> CLIENT.id NULL, table_id FK -> TABLE_RESTAURANT.id NULL, personnel_id FK -> PERSONNEL.id NULL, camera_id FK -> CAMERA.id NULL, payload_json)
+
+COMMANDE(id PK, client_id FK -> CLIENT.id, table_id FK -> TABLE_RESTAURANT.id, statut, date_creation, date_modification)
+
+ARTICLE_COMMANDE(id PK, commande_id FK -> COMMANDE.id, nom, quantite)
+
+TACHE(id PK, type, table_id FK -> TABLE_RESTAURANT.id NULL, client_id FK -> CLIENT.id NULL, personnel_id FK -> PERSONNEL.id NULL, score_priorite, niveau_priorite, statut, explication, date_creation)
+
+DECISION_AI(id PK, tache_id FK -> TACHE.id, evenement_id FK -> EVENEMENT.id NULL, score_priorite, explication, date_decision)</div>
+    <div class="footer">Smart Restaurant OS - MLD relationnel</div>
+  </section>
+
+  <section class="page small">
+    <h2>3. Architecture Générale</h2>
+    <p>Le système centralise les signaux terrain, met à jour le digital twin, puis calcule les meilleures actions.</p>
+    <div class="diagram-wrap">
+      <pre class="mermaid">
+flowchart TB
+    subgraph Sources["Sources de donnees"]
+        CAM1["Camera entree"]
+        CAM2["Camera salle"]
+        CAM3["Camera service"]
+        SENSOR["Capteurs IoT"]
+        STAFF["Tablette personnel"]
+        POS["POS / Cuisine"]
+    end
+    subgraph Backend["Backend FastAPI"]
+        INGEST["Ingestion evenements"]
+        VALIDATION["Validation"]
+        TWIN["Digital Twin"]
+        AI["Moteur IA de decision"]
+        TASKS["Gestion des taches"]
+        METRICS["Analytics & risques"]
+        API["API REST + WebSocket"]
+    end
+    DB["Base de donnees"]
+    subgraph Frontend["Frontend React"]
+        AUTH["Authentification"]
+        DASH["Dashboard live"]
+        MAP["Carte restaurant"]
+        CAMERA_UI["Vue cameras"]
+        TABLET["Interface tablette"]
+        INSIGHTS["Insights"]
+    end
+    CAM1 --> INGEST
+    CAM2 --> INGEST
+    CAM3 --> INGEST
+    SENSOR --> INGEST
+    STAFF --> API
+    POS --> API
+    INGEST --> VALIDATION --> TWIN --> AI --> TASKS --> METRICS
+    API <--> DB
+    API --> AUTH
+    API --> DASH
+    API --> MAP
+    API --> CAMERA_UI
+    API --> TABLET
+    API --> INSIGHTS
+      </pre>
+    </div>
+  </section>
+
+  <section class="page small">
+    <h2>4. Diagramme d'État d'une Table</h2>
+    <p>Chaque table suit un cycle de vie précis, déclenché par les événements capteurs, caméra ou staff.</p>
+    <div class="diagram-wrap">
+      <pre class="mermaid">
+stateDiagram-v2
+    [*] --> FREE
+    FREE --> ARRIVED: Groupe detecte entree
+    ARRIVED --> SEATED: Client assis
+    SEATED --> WAITING_ORDER: Attente serveur
+    WAITING_ORDER --> ORDER_IN_PROGRESS: Commande prise
+    ORDER_IN_PROGRESS --> WAITING_FOOD: Envoyee cuisine
+    WAITING_FOOD --> SERVED: Plat servi
+    SERVED --> FINISHED: Client termine
+    FINISHED --> NEEDS_CLEANING: Client quitte
+    NEEDS_CLEANING --> FREE: Table nettoyee
+      </pre>
+    </div>
+    <h3>Objectif</h3>
+    <p>Éviter les oublis opérationnels: prise de commande tardive, service en retard, table non nettoyée ou file d'attente non traitée.</p>
+  </section>
+
+  <section class="page small">
+    <h2>5. Séquence - Arrivée Client Jusqu'au Service</h2>
+    <p>Le parcours client est suivi depuis l'entrée jusqu'au service de nourriture.</p>
+    <div class="diagram-wrap">
+      <pre class="mermaid">
+sequenceDiagram
+    participant C as Camera entree
+    participant B as Backend FastAPI
+    participant DT as Digital Twin
+    participant AI as Decision Engine
+    participant W as Tablette serveur
+    participant K as Cuisine
+    C->>B: Detecte groupe entrant
+    B->>DT: Cree client + statut ARRIVED
+    DT->>AI: Envoie etat restaurant
+    AI->>AI: Calcule priorite
+    AI->>W: Tache: asseoir client
+    W->>B: Confirme client assis
+    B->>DT: Table = SEATED
+    DT->>AI: Nouvel etat
+    AI->>W: Tache: prendre commande
+    W->>B: Confirme commande prise
+    B->>K: Envoie commande cuisine
+    B->>DT: Table = WAITING_FOOD
+    K->>B: Plat pret
+    AI->>W: Tache: servir table
+    W->>B: Confirme plat servi
+    B->>DT: Table = SERVED
+      </pre>
+    </div>
+  </section>
+
+  <section class="page small">
+    <h2>6. Cas d'Utilisation</h2>
+    <p>Les utilisateurs ont des interfaces adaptées à leurs rôles: manager, hôte, serveur et cuisine.</p>
+    <div class="diagram-wrap">
+      <pre class="mermaid">
+flowchart LR
+    Manager["Manager"]
+    Waiter["Serveur"]
+    Kitchen["Cuisine"]
+    Host["Hote / Accueil"]
+    Sensor["Camera / Capteur"]
+    subgraph System["Smart Restaurant OS"]
+        UC1["Consulter dashboard"]
+        UC2["Voir carte restaurant"]
+        UC3["Recevoir prochaine tache"]
+        UC4["Confirmer action"]
+        UC5["Suivre commandes cuisine"]
+        UC6["Detecter arrivee client"]
+        UC7["Analyser surcharge"]
+        UC8["Configurer capteurs"]
+        UC9["Voir statistiques"]
+    end
+    Manager --> UC1
+    Manager --> UC2
+    Manager --> UC7
+    Manager --> UC8
+    Manager --> UC9
+    Waiter --> UC3
+    Waiter --> UC4
+    Waiter --> UC2
+    Kitchen --> UC5
+    Kitchen --> UC4
+    Host --> UC6
+    Host --> UC2
+    Host --> UC3
+    Sensor --> UC6
+      </pre>
+    </div>
+  </section>
+
+  <section class="page small">
+    <h2>7. Moteur de Décision IA</h2>
+    <p>L'application ne se limite pas aux alertes: elle priorise les actions et affecte les tâches aux ressources disponibles.</p>
+    <div class="diagram-wrap">
+      <pre class="mermaid">
+flowchart TD
+    A["Evenements temps reel"] --> B["Mise a jour Digital Twin"]
+    B --> C["Lecture etat global restaurant"]
+    C --> D["waiting_time"]
+    C --> E["group_size"]
+    C --> F["stage_urgency"]
+    C --> G["time_since_last_action"]
+    C --> H["congestion_factor"]
+    D --> I["Score de priorite"]
+    E --> I
+    F --> I
+    G --> I
+    H --> I
+    I --> J["Generation des taches"]
+    J --> K["Tri par priorite"]
+    K --> L["Personnel disponible"]
+    L --> M["Distance staff-table"]
+    M --> N["Assignation optimale"]
+    N --> O["Affichage tablette"]
+      </pre>
+    </div>
+  </section>
+
+  <section class="page small">
+    <h2>8. Déploiement</h2>
+    <p>La version locale utilise SQLite. Pour une version cloud permanente, le backend doit utiliser PostgreSQL.</p>
+    <div class="diagram-wrap">
+      <pre class="mermaid">
+flowchart TB
+    User["Utilisateur tablette / navigateur"] --> CDN["URL publique"]
+    CDN --> APP["Service Cloud"]
+    APP --> FRONT["React build statique"]
+    APP --> API["FastAPI backend"]
+    API --> DB["Base cloud PostgreSQL"]
+    API --> WS["WebSocket temps reel"]
+    API --> CAM["APIs cameras / flux video"]
+    API --> SENSOR["Webhooks capteurs IoT"]
+    API --> POS["POS / Cuisine"]
+    subgraph LocalDemo["Demo actuelle"]
+        LOCAL["PC local"]
+        SQLITE["restaurant_os.sqlite3"]
+        TUNNEL["Cloudflare Tunnel"]
+    end
+    TUNNEL --> LOCAL
+    LOCAL --> SQLITE
+      </pre>
+    </div>
+  </section>
+
+  <section class="page small">
+    <h2>9. Pages de l'Application</h2>
+    <p>La navigation React organise les fonctionnalités par rôle et par besoin opérationnel.</p>
+    <div class="diagram-wrap">
+      <pre class="mermaid">
+flowchart TD
+    Login["Authentification"] --> Dashboard["Dashboard Today"]
+    Dashboard --> Cameras["Page Cameras"]
+    Dashboard --> Floor["Page Floor Map"]
+    Dashboard --> Queue["Page Task Queue"]
+    Dashboard --> Kitchen["Page Kitchen"]
+    Dashboard --> Tablet["Page Staff Tablet"]
+    Dashboard --> Sensors["Page Sensors"]
+    Dashboard --> Insights["Page Insights"]
+    Dashboard --> Settings["Page Settings"]
+    Cameras --> Brain["Analyse multi-camera"]
+    Floor --> Twin["Digital Twin"]
+    Queue --> Priorities["Priorites IA"]
+    Kitchen --> Orders["Commandes"]
+    Tablet --> Confirm["Confirmation actions"]
+    Sensors --> Events["Simulation / Webhooks"]
+    Insights --> KPIs["KPIs et risques"]
+    Settings --> Config["SLA / Connecteurs"]
+      </pre>
+    </div>
+  </section>
+
+  <section class="page small">
+    <h2>10. Flux des Données</h2>
+    <p>Le système transforme les signaux bruts en décisions actionnables pour le personnel.</p>
+    <div class="diagram-wrap">
+      <pre class="mermaid">
+flowchart LR
+    A["Camera entree"] --> E["group_entered"]
+    B["Camera salle"] --> F["seated / staff_interaction"]
+    C["Tablette serveur"] --> G["order_taken / food_served"]
+    D["Cuisine"] --> H["food_ready"]
+    E --> I["Event Ingestion"]
+    F --> I
+    G --> I
+    H --> I
+    I --> J["Validation"]
+    J --> K["Digital Twin"]
+    K --> L["Decision Engine"]
+    L --> M["Tasks"]
+    M --> N["Staff Assignment"]
+    N --> O["Frontend React"]
+    O --> P["Action humaine"]
+    P --> I
+      </pre>
+    </div>
+    <div class="note">
+      <h3>Conclusion</h3>
+      <p>Ces diagrammes montrent que Smart Restaurant OS est un système décisionnel complet: il observe, comprend, priorise, affecte et guide les équipes en temps réel.</p>
+    </div>
+  </section>
+
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({
+      startOnLoad: true,
+      securityLevel: "loose",
+      theme: "base",
+      themeVariables: {
+        primaryColor: "#eaf6ee",
+        primaryTextColor: "#102319",
+        primaryBorderColor: "#2f7b58",
+        lineColor: "#617167",
+        secondaryColor: "#fff4df",
+        tertiaryColor: "#f7f4ea",
+        fontFamily: "Inter, Segoe UI, Arial"
+      }
+    });
+    window.__MERMAID_READY__ = new Promise((resolve) => {
+      const done = () => resolve(true);
+      setTimeout(done, 3500);
+      window.addEventListener("load", () => setTimeout(done, 1800));
+    });
+  </script>
+</body>
+</html>
