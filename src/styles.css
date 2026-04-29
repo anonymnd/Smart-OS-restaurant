@@ -200,6 +200,17 @@ button {
   margin-top: 30px;
 }
 
+.form-error {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fee2e2;
+  color: #991b1b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .auth-form label,
 .field {
   display: grid;

@@ -48,6 +48,15 @@ You can verify the active database from the API:
 /health/db
 ```
 
+For production security, set these app environment variables in Vercel:
+
+```text
+APP_SECRET=a-long-random-secret-at-least-32-characters
+DEMO_PASSWORD=your-new-login-password
+ALLOWED_ORIGINS=https://sros-restaurant-os.vercel.app
+SENSOR_API_KEY=another-long-random-secret-if-you-use-sensor-webhooks
+```
+
 ## 4. Realtime behavior
 
 The app's realtime UI uses FastAPI WebSocket:

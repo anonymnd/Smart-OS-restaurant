@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import asdict
+import hashlib
+import hmac
+import json
+import os
 from pathlib import Path
+import time
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -36,6 +42,24 @@ import simulation
 
 BASE_DIR = Path(__file__).resolve().parent
 DIST_DIR = BASE_DIR / "dist"
+DEFAULT_ALLOWED_ORIGINS = [
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    "http://127.0.0.1:8501",
+    "http://localhost:8501",
+    "https://sros-restaurant-os.vercel.app",
+]
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", ",".join(DEFAULT_ALLOWED_ORIGINS)).split(",")
+    if origin.strip()
+]
+APP_SECRET = os.getenv("APP_SECRET", "dev-only-change-me")
+DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "demo123")
+TOKEN_TTL_SECONDS = int(os.getenv("TOKEN_TTL_SECONDS", "28800"))
+SENSOR_API_KEY = os.getenv("SENSOR_API_KEY", "")
+AUTH_EXEMPT_PATHS = {"/", "/auth/login", "/health/db", "/openapi.json", "/docs", "/redoc"}
+VALID_ROLES = {"manager", "host", "waiter", "kitchen", "sensor"}
 
 
 app = FastAPI(
@@ -46,12 +70,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:5173",
-        "http://localhost:5173",
-        "http://127.0.0.1:8501",
-        "http://localhost:8501",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -130,6 +149,74 @@ class SLASettingsRequest(BaseModel):
     food_wait_max_min: int = 18
     dirty_table_max_min: int = 8
     critical_task_score: int = 115
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+    role: str = "manager"
+
+
+def b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+
+def b64url_decode(data: str) -> bytes:
+    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+
+
+def sign_payload(payload: dict[str, Any]) -> str:
+    body = b64url(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode())
+    signature = hmac.new(APP_SECRET.encode(), body.encode(), hashlib.sha256).digest()
+    return f"{body}.{b64url(signature)}"
+
+
+def verify_token(token: str) -> dict[str, Any]:
+    try:
+        body, signature = token.split(".", 1)
+        expected = b64url(hmac.new(APP_SECRET.encode(), body.encode(), hashlib.sha256).digest())
+        if not hmac.compare_digest(signature, expected):
+            raise ValueError("bad signature")
+        payload = json.loads(b64url_decode(body))
+        if payload.get("exp", 0) < int(time.time()):
+            raise ValueError("expired")
+        if payload.get("role") not in VALID_ROLES:
+            raise ValueError("invalid role")
+        return payload
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired session") from exc
+
+
+def bearer_payload(request: Request) -> dict[str, Any]:
+    authorization = request.headers.get("authorization", "")
+    if not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing session token")
+    return verify_token(authorization.split(" ", 1)[1].strip())
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in AUTH_EXEMPT_PATHS:
+        if request.url.path == "/sensors/webhook" and SENSOR_API_KEY:
+            if not hmac.compare_digest(request.headers.get("x-sensor-key", ""), SENSOR_API_KEY):
+                return JSONResponse({"detail": "Invalid sensor API key"}, status_code=401)
+        else:
+            try:
+                payload = bearer_payload(request)
+            except HTTPException as exc:
+                return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+            header_role = request.headers.get("x-role")
+            if not header_role or header_role != payload["role"]:
+                return JSONResponse({"detail": "Role header does not match session"}, status_code=403)
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Cache-Control"] = "no-store" if request.url.path.startswith(("/state", "/decision", "/audit", "/health")) else response.headers.get("Cache-Control", "")
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 
 class WebSocketHub:
@@ -216,7 +303,28 @@ def root():
 
 @app.get("/health/db")
 def health_db() -> dict:
-    return database_health()
+    health = database_health()
+    health["security"] = {
+        "app_secret_configured": APP_SECRET != "dev-only-change-me",
+        "custom_demo_password": DEMO_PASSWORD != "demo123",
+        "allowed_origins": ALLOWED_ORIGINS,
+        "sensor_api_key_configured": bool(SENSOR_API_KEY),
+    }
+    return health
+
+
+@app.post("/auth/login")
+def login(request: LoginRequest) -> dict:
+    role = request.role.strip().lower()
+    if role not in VALID_ROLES - {"sensor"}:
+        raise HTTPException(status_code=400, detail="Invalid role")
+    if not hmac.compare_digest(request.password, DEMO_PASSWORD):
+        audit("login_failed", {"email": request.email, "role": role}, actor="auth")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    exp = int(time.time()) + TOKEN_TTL_SECONDS
+    token = sign_payload({"email": request.email, "role": role, "exp": exp})
+    audit("login_success", {"email": request.email, "role": role}, actor="auth")
+    return {"token": token, "expires_at": exp, "user": {"email": request.email, "roleId": role}}
 
 
 @app.get("/state")

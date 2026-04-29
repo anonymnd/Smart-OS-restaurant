@@ -102,11 +102,23 @@ function priorityTone(level) {
 }
 
 async function api(path, options = {}) {
+  let session = null;
+  try {
+    session = JSON.parse(localStorage.getItem("sros-user") || "null");
+  } catch {
+    session = null;
+  }
+  const authHeaders = session?.token
+    ? { Authorization: `Bearer ${session.token}`, "x-role": session.roleId }
+    : {};
   const res = await fetch(`${API_URL}${path}`, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers: { "Content-Type": "application/json", ...authHeaders, ...(options.headers || {}) },
     ...options
   });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail || `${res.status} ${res.statusText}`);
+  }
   return res.json();
 }
 
@@ -114,15 +126,24 @@ function Login({ onLogin }) {
   const [form, setForm] = useState({ email: "ops@smartrestaurant.ai", password: "demo123" });
   const [role, setRole] = useState("manager");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
     setLoading(true);
-    setTimeout(() => {
+    setError("");
+    try {
+      const auth = await api("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email: form.email, password: form.password, role })
+      });
       setLoading(false);
       const selected = roles.find((item) => item.id === role);
-      onLogin({ name: selected.label, role: selected.label, roleId: role, email: form.email });
-    }, 550);
+      onLogin({ name: selected.label, role: selected.label, roleId: role, email: form.email, token: auth.token, expiresAt: auth.expires_at });
+    } catch (err) {
+      setLoading(false);
+      setError(err.message || "Sign in failed");
+    }
   }
 
   return (
@@ -167,6 +188,7 @@ function Login({ onLogin }) {
             {loading ? <Loader2 className="spin" size={18} /> : <ShieldCheck size={18} />}
             Enter command center
           </button>
+          {error ? <p className="form-error">{error}</p> : null}
         </form>
         <div className="role-picker">
           {roles.map((item) => (
@@ -1025,7 +1047,8 @@ export default function App() {
   const [user, setUser] = useState(() => {
     try {
       const saved = localStorage.getItem("sros-user");
-      return saved ? JSON.parse(saved) : null;
+      const parsed = saved ? JSON.parse(saved) : null;
+      return parsed?.token ? parsed : null;
     } catch {
       localStorage.removeItem("sros-user");
       return null;
