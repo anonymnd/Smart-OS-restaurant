@@ -544,9 +544,23 @@ function SensorsPage({ state, decision, modelStatus, sensorFeed, connectors, act
 
 function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
   const [selectedCamera, setSelectedCamera] = useState("CAM-DINING-01");
+  const [virtualFeed, setVirtualFeed] = useState({
+    id: "CAM-VIRTUAL-01",
+    name: "Virtual entrance camera",
+    zone: "Entrance",
+    role: "entrance_count",
+    source: "User video",
+    video_url: "https://assets.mixkit.co/videos/4385/4385-720.mp4",
+    license: "User-provided or public demo video",
+    page_url: "",
+    note: "Looped real video treated as a virtual live camera."
+  });
   const feeds = cameraFeeds?.feeds || [];
   const activeFeed = feeds.find((feed) => feed.id === selectedCamera) || feeds[0];
   const detections = cameraAnalysis?.camera_id === selectedCamera ? cameraAnalysis.detections || [] : [];
+  function updateVirtual(field, value) {
+    setVirtualFeed((feed) => ({ ...feed, [field]: value }));
+  }
   return (
     <div className="page-grid camera-grid">
       <section className="panel wide">
@@ -596,6 +610,69 @@ function CamerasPage({ cameraFeeds, cameraAnalysis, cameraBrain, actions }) {
             <Detail label="License" value={activeFeed.license} />
             <Detail label="AI truth" value="Video is real; boxes/events are simulated." />
             <Detail label="Production" value="Use RTSP/OpenDataCam/Axis/Camlytics metadata." />
+          </div>
+        )}
+      </section>
+      <section className="panel full">
+        <div className="panel-header">
+          <div>
+            <h2>Camera Feed Studio</h2>
+            <p>Use real restaurant videos as legal virtual live cameras. The system loops the video, analyzes metadata, and can push events into the digital twin.</p>
+          </div>
+          <div className="button-group">
+            <button onClick={() => actions.saveVirtualCamera(virtualFeed)}><Check size={16} /> Save feed</button>
+            <button className="primary-button" onClick={() => actions.analyzeVirtualCamera(virtualFeed)}><Sparkles size={16} /> Analyze & generate event</button>
+          </div>
+        </div>
+        <div className="studio-grid">
+          <div className="studio-form">
+            <label className="field">Camera ID
+              <input value={virtualFeed.id} onChange={(e) => updateVirtual("id", e.target.value)} />
+            </label>
+            <label className="field">Name
+              <input value={virtualFeed.name} onChange={(e) => updateVirtual("name", e.target.value)} />
+            </label>
+            <label className="field">Zone
+              <select value={virtualFeed.zone} onChange={(e) => updateVirtual("zone", e.target.value)}>
+                <option value="Entrance">Entrance</option>
+                <option value="Waiting">Waiting</option>
+                <option value="Dining">Dining</option>
+                <option value="Service">Service</option>
+                <option value="Kitchen">Kitchen</option>
+              </select>
+            </label>
+            <label className="field">Role
+              <select value={virtualFeed.role} onChange={(e) => updateVirtual("role", e.target.value)}>
+                <option value="entrance_count">Entrance count</option>
+                <option value="queue_depth">Queue depth</option>
+                <option value="table_occupancy">Table occupancy</option>
+                <option value="service_flow">Service flow</option>
+                <option value="kitchen_load">Kitchen load</option>
+              </select>
+            </label>
+            <label className="field full-field">Video URL
+              <input value={virtualFeed.video_url} onChange={(e) => updateVirtual("video_url", e.target.value)} placeholder="https://...mp4" />
+            </label>
+            <label className="field">Source
+              <input value={virtualFeed.source} onChange={(e) => updateVirtual("source", e.target.value)} />
+            </label>
+            <label className="field">License / usage note
+              <input value={virtualFeed.license} onChange={(e) => updateVirtual("license", e.target.value)} />
+            </label>
+          </div>
+          <div className="studio-preview">
+            <video key={virtualFeed.video_url} src={virtualFeed.video_url} autoPlay muted loop playsInline controls />
+            <div className="studio-note">
+              <b>Safe demo path</b>
+              <p>Use stock clips, your own recordings, or consented venue footage. Avoid random public CCTV streams because they are unstable and may expose private customers.</p>
+            </div>
+          </div>
+        </div>
+        {cameraAnalysis?.feed && (
+          <div className="analysis-summary">
+            <MetricCard label="People detected" value={cameraAnalysis.people_count ?? 0} detail={`${cameraAnalysis.guest_count ?? 0} guests, ${cameraAnalysis.staff_count ?? 0} staff`} icon={Users} tone="blue" />
+            <MetricCard label="Signal" value={cameraAnalysis.table_occupancy_signal || "LOW"} detail="virtual camera metadata" icon={Gauge} tone="amber" />
+            <MetricCard label="Twin updated" value={cameraAnalysis.applied_to_digital_twin ? "YES" : "NO"} detail={cameraAnalysis.generated_event?.event_type || "analysis only"} icon={Activity} tone={cameraAnalysis.applied_to_digital_twin ? "green" : "blue"} />
           </div>
         )}
       </section>
@@ -1141,6 +1218,16 @@ export default function App() {
     cvAnalyze: (sourceUrl, cameraId) => runAction(async () => {
       const result = await api("/cv/analyze", { method: "POST", body: JSON.stringify({ source_url: sourceUrl, camera_id: cameraId }) });
       setCameraAnalysis({ camera_id: cameraId, detections: result.detections, mode: result.mode, recommendation: result.table_occupancy_signal });
+    }),
+    saveVirtualCamera: (feed) => runAction(async () => {
+      const result = await api("/cameras/virtual", { method: "POST", body: JSON.stringify(feed) });
+      setCameraFeeds({ ...(cameraFeeds || {}), feeds: result.feeds });
+      setCameraAnalysis(null);
+    }),
+    analyzeVirtualCamera: (feed) => runAction(async () => {
+      const result = await api("/cameras/virtual/analyze", { method: "POST", body: JSON.stringify(feed) });
+      setCameraAnalysis({ ...result, detections: result.detections || [] });
+      setSelectedTable(null);
     }),
     trainCameraBrain: () => runAction(async () => {
       const result = await api("/vision/brain/train?epochs=6", { method: "POST" });

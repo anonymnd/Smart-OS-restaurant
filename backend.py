@@ -24,6 +24,7 @@ from ops_store import (
     audit,
     database_health,
     get_sla_settings,
+    get_settings,
     list_connectors,
     load_state,
     materialize_tasks,
@@ -141,6 +142,18 @@ class OrderTransitionRequest(BaseModel):
 class CVAnalyzeRequest(BaseModel):
     source_url: str
     camera_id: str = "CAM-DEMO"
+
+
+class VirtualCameraRequest(BaseModel):
+    id: str
+    name: str
+    zone: str = "Dining"
+    role: str = "table_occupancy"
+    source: str = "Custom video"
+    video_url: str
+    license: str = "User-provided or public demo video"
+    page_url: str = ""
+    note: str = "Virtual live camera using a looping real video."
 
 
 class SLASettingsRequest(BaseModel):
@@ -285,6 +298,14 @@ DEMO_CAMERA_FEEDS = [
 ]
 
 
+def virtual_camera_feeds() -> list[dict[str, Any]]:
+    return get_settings("virtual_camera_feeds", [])
+
+
+def all_camera_feeds() -> list[dict[str, Any]]:
+    return [*DEMO_CAMERA_FEEDS, *virtual_camera_feeds()]
+
+
 persisted_state = load_state()
 if persisted_state is not None:
     simulation.SIMULATOR.state = persisted_state
@@ -387,7 +408,54 @@ def camera_feeds() -> dict:
     return {
         "truth_note": "These are real public stock videos for UI/testing. The current app simulates detections; it does not run pixel-level CV inference yet.",
         "production_path": "For real camera AI, connect RTSP/IP camera analytics via OpenDataCam, Axis People Counter API, Camlytics webhooks, or send YOLO/ByteTrack metadata to /sensors/webhook.",
-        "feeds": DEMO_CAMERA_FEEDS,
+        "feeds": all_camera_feeds(),
+    }
+
+
+@app.post("/cameras/virtual")
+def save_virtual_camera(request: VirtualCameraRequest) -> dict:
+    feed = request.model_dump()
+    feed["id"] = feed["id"].strip().upper().replace(" ", "-")[:48] or "CAM-VIRTUAL-01"
+    feed["kind"] = "virtual_live_video"
+    feeds = [item for item in virtual_camera_feeds() if item.get("id") != feed["id"]]
+    feeds.append(feed)
+    set_settings("virtual_camera_feeds", feeds)
+    audit("virtual_camera_saved", {"id": feed["id"], "zone": feed["zone"], "role": feed["role"]}, actor="manager")
+    return {"feed": feed, "feeds": [*DEMO_CAMERA_FEEDS, *feeds]}
+
+
+@app.post("/cameras/virtual/analyze")
+def analyze_virtual_camera(request: VirtualCameraRequest) -> dict:
+    simulator = get_simulator()
+    result = CV_ADAPTER.analyze(request.video_url, request.id)
+    zone = request.zone.strip().lower()
+    applied = False
+    generated_event: dict[str, Any] | None = None
+    if zone in {"entrance", "waiting", "host"}:
+        group_size = max(1, min(8, int(result.get("guest_count", result.get("people_count", 2)))))
+        validation = validate_event(simulator.state, "group_entered", {"group_size": group_size}, role="sensor")
+        generated_event = {"event_type": "group_entered", "group_size": group_size}
+        if validation.ok:
+            simulator.ingest_event("entrance_camera", validation.payload)
+            applied = True
+    elif zone in {"dining", "floor", "service"}:
+        events = PIPELINE.simulate_camera_batch(simulator.state)
+        generated_event = {"event_type": "table_activity_detected", "events": [event.id for event in events]}
+    elif zone == "kitchen":
+        generated_event = {"event_type": "kitchen_load_estimated", "people_count": result["people_count"]}
+    audit(
+        "virtual_camera_analyzed",
+        {"camera_id": request.id, "zone": request.zone, "people_count": result["people_count"], "applied": applied},
+        actor="vision-studio",
+    )
+    save_state(simulator.state)
+    return {
+        **result,
+        "camera_id": request.id,
+        "feed": request.model_dump(),
+        "generated_event": generated_event,
+        "applied_to_digital_twin": applied,
+        "decision": decision(),
     }
 
 
@@ -482,14 +550,14 @@ def camera_brain_status() -> dict:
 
 @app.post("/vision/brain/train")
 def camera_brain_train(epochs: int = 5) -> dict:
-    result = CAMERA_BRAIN.train_from_videos(DEMO_CAMERA_FEEDS, epochs=epochs)
+    result = CAMERA_BRAIN.train_from_videos(all_camera_feeds(), epochs=epochs)
     audit("camera_brain_trained", {"epochs": epochs, "samples": result["profile"]["samples_seen"]}, actor="vision-brain")
     return result
 
 
 @app.post("/vision/brain/analyze-all")
 async def camera_brain_analyze_all() -> dict:
-    result = CAMERA_BRAIN.analyze_all(DEMO_CAMERA_FEEDS)
+    result = CAMERA_BRAIN.analyze_all(all_camera_feeds())
     audit("camera_brain_analysis", {"status": result["status"], "people": result["total_people"]}, actor="vision-brain")
     await HUB.broadcast({"type": "camera_brain_analysis", "analysis": result})
     return result
