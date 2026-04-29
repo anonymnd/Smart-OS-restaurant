@@ -16,6 +16,7 @@ from models import TableState
 from multi_camera_brain import CAMERA_BRAIN
 from ops_store import (
     audit,
+    database_health,
     get_sla_settings,
     list_connectors,
     load_state,
@@ -211,6 +212,11 @@ def root():
         "docs": "/docs",
         "core": "real-time decision engine for restaurant operations",
     }
+
+
+@app.get("/health/db")
+def health_db() -> dict:
+    return database_health()
 
 
 @app.get("/state")

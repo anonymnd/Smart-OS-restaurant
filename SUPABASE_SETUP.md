@@ -12,8 +12,10 @@ This app is now ready to use Supabase Postgres through the `DATABASE_URL` enviro
 
 The value should look like this:
 
+For this project, your pooler connection string is:
+
 ```text
-postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-region.pooler.supabase.com:6543/postgres?sslmode=require
+postgresql://postgres.qktgmaqnjepthxhnuhyn:YOUR_PASSWORD@aws-1-eu-west-2.pooler.supabase.com:6543/postgres?sslmode=require
 ```
 
 Use the pooler URL for Render/Railway because hosted web apps create multiple short-lived connections.
@@ -23,7 +25,7 @@ Use the pooler URL for Render/Railway because hosted web apps create multiple sh
 In Render, add this environment variable:
 
 ```text
-DATABASE_URL=postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-region.pooler.supabase.com:6543/postgres?sslmode=require
+DATABASE_URL=postgresql://postgres.qktgmaqnjepthxhnuhyn:YOUR_PASSWORD@aws-1-eu-west-2.pooler.supabase.com:6543/postgres?sslmode=require
 ```
 
 Do not commit the real database password to GitHub.
@@ -39,6 +41,12 @@ On startup, the backend creates these tables if they do not exist:
 - `settings`
 
 The app still uses local SQLite automatically when `DATABASE_URL` is empty.
+
+You can verify the active database from the API:
+
+```text
+/health/db
+```
 
 ## 4. Realtime behavior
 

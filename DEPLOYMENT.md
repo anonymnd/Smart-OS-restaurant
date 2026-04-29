@@ -25,7 +25,7 @@ uvicorn backend:app --host 0.0.0.0 --port $PORT
 Environment variables:
 
 ```text
-DATABASE_URL=postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-region.pooler.supabase.com:6543/postgres?sslmode=require
+DATABASE_URL=postgresql://postgres.qktgmaqnjepthxhnuhyn:YOUR_PASSWORD@aws-1-eu-west-2.pooler.supabase.com:6543/postgres?sslmode=require
 ```
 
 Use the Supabase **Transaction pooler** connection string for hosted apps. Keep `sslmode=require`.
