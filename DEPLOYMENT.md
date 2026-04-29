@@ -13,7 +13,7 @@ The simplest no-Docker deployment is one web service that builds React and serve
 Build command:
 
 ```bash
-pip install -r requirements.txt && npm ci && npm run build
+pip install -r requirements.txt
 ```
 
 Start command:
@@ -35,7 +35,7 @@ Use the Supabase **Transaction pooler** connection string for hosted apps. Keep 
 Create a new service from the GitHub repo and use:
 
 ```bash
-pip install -r requirements.txt && npm ci && npm run build
+pip install -r requirements.txt
 ```
 
 Start command:
