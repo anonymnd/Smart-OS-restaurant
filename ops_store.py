@@ -21,7 +21,7 @@ def database_url() -> str:
 
 def make_engine() -> Engine:
     url = database_url()
-    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {"connect_timeout": 4}
     return create_engine(url, connect_args=connect_args, pool_pre_ping=True, future=True)
 
 
