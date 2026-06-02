@@ -22,6 +22,7 @@ from models import TableState
 from multi_camera_brain import CAMERA_BRAIN
 from ops_store import (
     audit,
+    DB_INIT_ERROR,
     database_health,
     get_sla_settings,
     get_settings,
@@ -275,7 +276,10 @@ def all_camera_feeds() -> list[dict[str, Any]]:
     return [*DEMO_CAMERA_FEEDS, *virtual_camera_feeds()]
 
 
-persisted_state = load_state()
+try:
+    persisted_state = load_state()
+except Exception:
+    persisted_state = None
 if persisted_state is not None:
     simulation.SIMULATOR.state = persisted_state
 
@@ -294,6 +298,7 @@ def root():
 @app.get("/health/db")
 def health_db() -> dict:
     health = database_health()
+    health["startup_error"] = DB_INIT_ERROR
     health["security"] = {
         "app_secret_configured": APP_SECRET != "dev-only-change-me",
         "custom_demo_password": DEMO_PASSWORD != "demo123",

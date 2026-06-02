@@ -26,6 +26,7 @@ def make_engine() -> Engine:
 
 
 ENGINE = make_engine()
+DB_INIT_ERROR: str | None = None
 
 
 def is_postgres() -> bool:
@@ -318,4 +319,7 @@ def get_sla_settings() -> dict[str, Any]:
     return {**DEFAULT_SLA, **saved}
 
 
-init_db()
+try:
+    init_db()
+except Exception as exc:
+    DB_INIT_ERROR = str(exc)
