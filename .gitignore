@@ -5,9 +5,20 @@ __pycache__/
 node_modules/
 
 .env
+.env.*
+!.env.example
+.envrc
+secrets/
+credentials/
+*.pem
+*.key
+*.p12
+*.pfx
 *.log
 *.sqlite3
+*.sqlite3-*
 *.db
+*.db-*
 
 demo_gif_frames/
 demo_video_capture/
@@ -30,3 +41,22 @@ pos-websocket-cv-smoke.png
 camera-brain-smoke.png
 
 test-output.pptx
+
+# Local deployment notes
+/DEPLOYMENT.md
+/SUPABASE_SETUP.md
+/VERCEL_DEPLOYMENT.md
+
+# Local presentations, reports, and capture tools
+/Smart_Restaurant_OS_*.pdf
+/Smart_Restaurant_OS_*.pptx
+/smart_restaurant_diagrams_report.html
+/pitch-app-*.png
+/pitch-fr-*.png
+/build_pitch_deck*.mjs
+/deck_build_test.mjs
+/record_demo_*.mjs
+
+# Local hosting metadata
+.vercel/
+.netlify/
