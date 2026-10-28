@@ -149,6 +149,15 @@ class DatabaseUrlTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ops_store.make_engine()
 
+    def test_transaction_pooler_does_not_use_named_prepared_statements(self):
+        with patch.dict(os.environ, {"DATABASE_URL": "postgresql://user:password@localhost/database"}):
+            engine = ops_store.make_engine()
+            with patch.object(engine.dialect, "connect", side_effect=RuntimeError("connection intercepted")) as connect:
+                with self.assertRaises(RuntimeError):
+                    engine.connect()
+                self.assertIsNone(connect.call_args.kwargs["prepare_threshold"])
+            engine.dispose()
+
 
 if __name__ == "__main__":
     unittest.main()

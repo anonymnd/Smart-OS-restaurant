@@ -36,7 +36,9 @@ def make_engine() -> Engine:
     url = make_url(raw_url)
     if url.get_backend_name() == "postgresql":
         url = url.set(drivername="postgresql+psycopg")
-        return create_engine(url, connect_args={"connect_timeout": 5}, poolclass=NullPool)
+        # Transaction poolers can assign a different server connection per
+        # transaction; named prepared statements cannot be shared across them.
+        return create_engine(url, connect_args={"connect_timeout": 5, "prepare_threshold": None}, poolclass=NullPool)
     if url.get_backend_name() != "sqlite":
         raise ValueError("DATABASE_URL must use PostgreSQL or SQLite")
     return create_engine(url, connect_args={"check_same_thread": False, "timeout": 10})

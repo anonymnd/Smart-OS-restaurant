@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import hmac
+import logging
 import anyio
 from sqlalchemy.exc import SQLAlchemyError
 import time
@@ -189,7 +190,9 @@ async def security_middleware(request: Request, call_next):
             pass
     except HTTPException as exc:
         response = JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-    except (SQLAlchemyError, ValueError, ImportError):
+    except (SQLAlchemyError, ValueError, ImportError) as exc:
+        # Log the failure category without URLs, SQL parameters, or secrets.
+        logging.getLogger(__name__).error("Data service failed: %s", type(exc).__name__)
         response = JSONResponse({"detail": "The data service is temporarily unavailable. Please try again shortly."}, status_code=503)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
