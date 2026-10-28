@@ -3,60 +3,122 @@ from __future__ import annotations
 import json
 import os
 import pickle
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import anyio
+
 from sqlalchemy import bindparam, create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine, make_url
+from sqlalchemy.pool import NullPool
 
 from models import RestaurantState, now_utc
 
 
 DB_PATH = Path(__file__).with_name("restaurant_os.sqlite3")
+_connection: ContextVar[Connection | None] = ContextVar("database_connection", default=None)
 
 
 def database_url() -> str:
-    return os.getenv("DATABASE_URL") or f"sqlite:///{DB_PATH.as_posix()}"
+    configured = os.getenv("DATABASE_URL", "").strip()
+    if not configured and os.getenv("VERCEL"):
+        raise ValueError("DATABASE_URL must be configured for serverless deployment")
+    return configured or f"sqlite:///{DB_PATH.as_posix()}"
 
 
 def make_engine() -> Engine:
-    url = database_url()
-    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {"connect_timeout": 4}
-    return create_engine(url, connect_args=connect_args, pool_pre_ping=True, future=True)
+    raw_url = database_url()
+    if raw_url.startswith("postgres://"):
+        raw_url = "postgresql://" + raw_url[len("postgres://"):]
+    url = make_url(raw_url)
+    if url.get_backend_name() == "postgresql":
+        url = url.set(drivername="postgresql+psycopg")
+        return create_engine(url, connect_args={"connect_timeout": 5}, poolclass=NullPool)
+    if url.get_backend_name() != "sqlite":
+        raise ValueError("DATABASE_URL must use PostgreSQL or SQLite")
+    return create_engine(url, connect_args={"check_same_thread": False, "timeout": 10})
 
 
-ENGINE = make_engine()
-DB_INIT_ERROR: str | None = None
+get_engine = lru_cache(maxsize=1)(make_engine)
 
 
 def is_postgres() -> bool:
-    return ENGINE.dialect.name == "postgresql"
+    return get_engine().dialect.name == "postgresql"
+
+
+@contextmanager
+def connection():
+    current = _connection.get()
+    if current is not None:
+        yield current
+    else:
+        with get_engine().begin() as conn:
+            yield conn
+
+
+@contextmanager
+def unit_of_work():
+    """Serialize this restaurant's read/modify/write cycle across workers."""
+    with get_engine().connect() as conn:
+        with conn.begin():
+            if is_postgres():
+                conn.execute(text("SELECT pg_advisory_xact_lock(73409629)"))
+            else:
+                conn.exec_driver_sql("BEGIN IMMEDIATE")
+            token = _connection.set(conn)
+            try:
+                yield conn
+            finally:
+                _connection.reset(token)
+
+
+@asynccontextmanager
+async def transaction():
+    """Bind one database transaction to the async request and its worker calls."""
+    def begin():
+        conn = get_engine().connect()
+        try:
+            tx = conn.begin()
+            if is_postgres():
+                conn.execute(text("SELECT pg_advisory_xact_lock(73409629)"))
+            else:
+                conn.exec_driver_sql("BEGIN IMMEDIATE")
+            return conn, tx
+        except BaseException:
+            conn.close()
+            raise
+
+    conn, tx = await anyio.to_thread.run_sync(begin)
+    token = _connection.set(conn)
+    try:
+        yield
+        await anyio.to_thread.run_sync(tx.commit)
+    except BaseException:
+        with anyio.CancelScope(shield=True):
+            await anyio.to_thread.run_sync(tx.rollback)
+        raise
+    finally:
+        _connection.reset(token)
+        with anyio.CancelScope(shield=True):
+            await anyio.to_thread.run_sync(conn.close)
 
 
 def database_health() -> dict[str, Any]:
-    safe_url = database_url()
-    if "://" in safe_url and "@" in safe_url:
-        prefix, rest = safe_url.split("://", 1)
-        if ":" in rest.split("@", 1)[0]:
-            user = rest.split("@", 1)[0].split(":", 1)[0]
-            host = rest.split("@", 1)[1]
-            safe_url = f"{prefix}://{user}:***@{host}"
     try:
-        with ENGINE.connect() as conn:
+        with connection() as conn:
             conn.execute(text("SELECT 1")).scalar_one()
         return {
             "ok": True,
-            "dialect": ENGINE.dialect.name,
+            "dialect": get_engine().dialect.name,
             "database_url_configured": bool(os.getenv("DATABASE_URL")),
-            "safe_url": safe_url,
         }
-    except Exception as exc:
+    except Exception:
         return {
             "ok": False,
-            "dialect": ENGINE.dialect.name,
             "database_url_configured": bool(os.getenv("DATABASE_URL")),
-            "safe_url": safe_url,
-            "error": str(exc),
         }
 
 
@@ -109,13 +171,15 @@ def init_db() -> None:
         )
         """,
     ]
-    with ENGINE.begin() as conn:
+    with connection() as conn:
+        if is_postgres():
+            conn.execute(text("SELECT pg_advisory_xact_lock(73409629)"))
         for statement in statements:
             conn.execute(text(statement))
 
 
 def execute(statement: str, params: dict[str, Any] | None = None) -> None:
-    with ENGINE.begin() as conn:
+    with connection() as conn:
         conn.execute(text(statement), params or {})
 
 
@@ -130,18 +194,20 @@ def save_state(state: RestaurantState) -> None:
     )
 
 
-def load_state() -> RestaurantState | None:
-    with ENGINE.connect() as conn:
+def load_snapshot() -> Any:
+    with connection() as conn:
         row = conn.execute(text("SELECT state_blob FROM snapshots WHERE id = 1")).mappings().fetchone()
     if not row:
         return None
-    try:
-        blob = row["state_blob"]
-        if isinstance(blob, memoryview):
-            blob = blob.tobytes()
-        return pickle.loads(blob)
-    except Exception:
-        return None
+    blob = row["state_blob"]
+    if isinstance(blob, memoryview):
+        blob = blob.tobytes()
+    return pickle.loads(blob)
+
+
+def load_state() -> RestaurantState | None:
+    snapshot = load_snapshot()
+    return snapshot.get("state") if isinstance(snapshot, dict) else snapshot
 
 
 def audit(event_type: str, payload: dict[str, Any], actor: str = "system") -> None:
@@ -157,7 +223,7 @@ def audit(event_type: str, payload: dict[str, Any], actor: str = "system") -> No
 
 
 def recent_audit(limit: int = 80) -> list[dict[str, Any]]:
-    with ENGINE.connect() as conn:
+    with connection() as conn:
         rows = conn.execute(
             text("SELECT * FROM audit_log ORDER BY id DESC LIMIT :limit"),
             {"limit": limit},
@@ -206,7 +272,7 @@ def upsert_connector(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def list_connectors() -> list[dict[str, Any]]:
-    with ENGINE.connect() as conn:
+    with connection() as conn:
         rows = conn.execute(text("SELECT * FROM connectors ORDER BY updated_at DESC")).mappings().fetchall()
     return [public_connector(dict(row)) for row in rows]
 
@@ -240,7 +306,7 @@ def set_task_status(task_id: str, status: str, staff_id: str | None = None) -> d
 def materialize_tasks(tasks: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     current_time = now_utc().isoformat()
     task_ids = [task["id"] for task in tasks]
-    with ENGINE.begin() as conn:
+    with connection() as conn:
         for task in tasks:
             existing = conn.execute(
                 text("SELECT status, staff_id FROM task_workflow WHERE task_id = :task_id"),
@@ -273,7 +339,7 @@ def materialize_tasks(tasks: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
 
 def task_status_map() -> dict[str, dict[str, Any]]:
-    with ENGINE.connect() as conn:
+    with connection() as conn:
         rows = conn.execute(text("SELECT * FROM task_workflow")).mappings().fetchall()
     return {
         row["task_id"]: {
@@ -295,7 +361,7 @@ DEFAULT_SLA = {
 
 
 def get_settings(key: str, default: Any = None) -> Any:
-    with ENGINE.connect() as conn:
+    with connection() as conn:
         row = conn.execute(text("SELECT value FROM settings WHERE key = :key"), {"key": key}).mappings().fetchone()
     if not row:
         return default
@@ -317,9 +383,3 @@ def set_settings(key: str, value: Any) -> Any:
 def get_sla_settings() -> dict[str, Any]:
     saved = get_settings("sla", DEFAULT_SLA)
     return {**DEFAULT_SLA, **saved}
-
-
-try:
-    init_db()
-except Exception as exc:
-    DB_INIT_ERROR = str(exc)

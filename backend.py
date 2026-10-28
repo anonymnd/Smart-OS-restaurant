@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-import base64
 from dataclasses import asdict
-import hashlib
 import hmac
-import json
-import os
-from pathlib import Path
+import anyio
+from sqlalchemy.exc import SQLAlchemyError
 import time
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+
+from auth import PUBLIC_PATHS, VALID_ROLES, authenticate, sign_payload
+from config import ALLOWED_ORIGINS, DEMO_PASSWORD, DIST_DIR, PRODUCTION, SENSOR_API_KEY, TOKEN_TTL_SECONDS, authentication_configured
+from runtime_state import restaurant_request
 
 from ai_pipeline import CAMERA_INTEGRATION_OPTIONS, PIPELINE, RISK_MODEL
 from cv_adapter import CV_ADAPTER
@@ -22,12 +23,10 @@ from models import TableState
 from multi_camera_brain import CAMERA_BRAIN
 from ops_store import (
     audit,
-    DB_INIT_ERROR,
     database_health,
     get_sla_settings,
     get_settings,
     list_connectors,
-    load_state,
     materialize_tasks,
     recent_audit,
     save_state,
@@ -42,32 +41,13 @@ from simulation import get_simulator
 import simulation
 
 
-BASE_DIR = Path(__file__).resolve().parent
-DIST_DIR = BASE_DIR / "dist"
-DEFAULT_ALLOWED_ORIGINS = [
-    "http://127.0.0.1:5173",
-    "http://localhost:5173",
-    "http://127.0.0.1:8501",
-    "http://localhost:8501",
-    "https://sros-restaurant-os.vercel.app",
-]
-ALLOWED_ORIGINS = [
-    origin.strip()
-    for origin in os.getenv("ALLOWED_ORIGINS", ",".join(DEFAULT_ALLOWED_ORIGINS)).split(",")
-    if origin.strip()
-]
-APP_SECRET = os.getenv("APP_SECRET", "dev-only-change-me")
-DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "demo123")
-TOKEN_TTL_SECONDS = int(os.getenv("TOKEN_TTL_SECONDS", "28800"))
-SENSOR_API_KEY = os.getenv("SENSOR_API_KEY", "")
-AUTH_EXEMPT_PATHS = {"/", "/auth/login", "/health/db", "/openapi.json", "/docs", "/redoc"}
-VALID_ROLES = {"manager", "host", "waiter", "kitchen", "sensor"}
-
-
 app = FastAPI(
     title="Smart Restaurant Operating System",
     description="Real-time digital twin, event ingestion, decision engine, and staff guidance API.",
-    version="0.1.0",
+    version="0.2.0",
+    docs_url=None if PRODUCTION else "/docs",
+    redoc_url=None if PRODUCTION else "/redoc",
+    openapi_url=None if PRODUCTION else "/openapi.json",
 )
 
 app.add_middleware(
@@ -132,7 +112,7 @@ class ScenarioRequest(BaseModel):
 
 class OrderRequest(BaseModel):
     table_id: str
-    items: list[str] = Field(default_factory=lambda: ["chef special", "water"])
+    items: list[str] = Field(default_factory=lambda: ["chef special", "water"], min_length=1, max_length=50)
 
 
 class OrderTransitionRequest(BaseModel):
@@ -158,105 +138,73 @@ class VirtualCameraRequest(BaseModel):
 
 
 class SLASettingsRequest(BaseModel):
-    seat_wait_max_min: int = 8
-    order_wait_max_min: int = 7
-    food_wait_max_min: int = 18
-    dirty_table_max_min: int = 8
-    critical_task_score: int = 115
+    seat_wait_max_min: int = Field(default=8, ge=1, le=240)
+    order_wait_max_min: int = Field(default=7, ge=1, le=240)
+    food_wait_max_min: int = Field(default=18, ge=1, le=240)
+    dirty_table_max_min: int = Field(default=8, ge=1, le=240)
+    critical_task_score: int = Field(default=115, ge=1, le=1000)
 
 
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=256)
     role: str = "manager"
 
 
-def b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode().rstrip("=")
-
-
-def b64url_decode(data: str) -> bytes:
-    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
-
-
-def sign_payload(payload: dict[str, Any]) -> str:
-    body = b64url(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode())
-    signature = hmac.new(APP_SECRET.encode(), body.encode(), hashlib.sha256).digest()
-    return f"{body}.{b64url(signature)}"
-
-
-def verify_token(token: str) -> dict[str, Any]:
-    try:
-        body, signature = token.split(".", 1)
-        expected = b64url(hmac.new(APP_SECRET.encode(), body.encode(), hashlib.sha256).digest())
-        if not hmac.compare_digest(signature, expected):
-            raise ValueError("bad signature")
-        payload = json.loads(b64url_decode(body))
-        if payload.get("exp", 0) < int(time.time()):
-            raise ValueError("expired")
-        if payload.get("role") not in VALID_ROLES:
-            raise ValueError("invalid role")
-        return payload
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="Invalid or expired session") from exc
-
-
-def bearer_payload(request: Request) -> dict[str, Any]:
-    authorization = request.headers.get("authorization", "")
-    if not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Missing session token")
-    return verify_token(authorization.split(" ", 1)[1].strip())
+_request_lock = anyio.Lock()
 
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
-    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path not in AUTH_EXEMPT_PATHS:
-        if request.url.path == "/sensors/webhook" and SENSOR_API_KEY:
-            if not hmac.compare_digest(request.headers.get("x-sensor-key", ""), SENSOR_API_KEY):
-                return JSONResponse({"detail": "Invalid sensor API key"}, status_code=401)
+    path = request.url.path
+    static = path.startswith("/assets/") or path == "/favicon.svg"
+    public = path in PUBLIC_PATHS or static or (not PRODUCTION and path in {"/docs", "/redoc", "/openapi.json"})
+    try:
+        if request.method != "OPTIONS" and not public:
+            if path == "/sensors/webhook" and SENSOR_API_KEY:
+                if not hmac.compare_digest(request.headers.get("x-sensor-key", ""), SENSOR_API_KEY):
+                    raise HTTPException(status_code=401, detail="Invalid sensor API key")
+            else:
+                request.state.user = authenticate(request)
+        if path == "/auth/login" and not authentication_configured():
+            raise HTTPException(status_code=503, detail="Sign-in is temporarily unavailable.")
+        if path in {"/", "/health/db"} or static or request.method == "OPTIONS" or path in {"/docs", "/redoc", "/openapi.json"}:
+            response = await call_next(request)
         else:
-            try:
-                payload = bearer_payload(request)
-            except HTTPException as exc:
-                return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-            header_role = request.headers.get("x-role")
-            if not header_role or header_role != payload["role"]:
-                return JSONResponse({"detail": "Role header does not match session"}, status_code=403)
-    response = await call_next(request)
+            # Each request sees the latest committed state, including on a cold worker.
+            async with _request_lock:
+                async with restaurant_request():
+                    response = await call_next(request)
+                    if response.status_code >= 400:
+                        # The context rolls back all writes from a rejected operation.
+                        raise RejectedOperation(response)
+    except RejectedOperation as exc:
+        response = exc.response
+        # Preserve the audit without committing any rejected business changes.
+        actor = getattr(request.state, "user", {}).get("role", "auth")
+        event = "login_failed" if path == "/auth/login" else "event_rejected"
+        try:
+            await anyio.to_thread.run_sync(lambda: audit(event, {"path": path, "status": response.status_code}, actor=actor))
+        except SQLAlchemyError:
+            pass
+    except HTTPException as exc:
+        response = JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    except (SQLAlchemyError, ValueError, ImportError):
+        response = JSONResponse({"detail": "The data service is temporarily unavailable. Please try again shortly."}, status_code=503)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    response.headers["Cache-Control"] = "no-store" if request.url.path.startswith(("/state", "/decision", "/audit", "/health")) else response.headers.get("Cache-Control", "")
+    response.headers["Permissions-Policy"] = "camera=(self), microphone=(), geolocation=()"
+    if not static:
+        response.headers["Cache-Control"] = "no-store"
     if request.url.scheme == "https":
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
     return response
 
 
-class WebSocketHub:
-    def __init__(self) -> None:
-        self.connections: list[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket) -> None:
-        await websocket.accept()
-        self.connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket) -> None:
-        if websocket in self.connections:
-            self.connections.remove(websocket)
-
-    async def broadcast(self, payload: dict[str, Any]) -> None:
-        stale = []
-        for websocket in self.connections:
-            try:
-                await websocket.send_json(payload)
-            except Exception:
-                stale.append(websocket)
-        for websocket in stale:
-            self.disconnect(websocket)
-
-
-HUB = WebSocketHub()
+class RejectedOperation(Exception):
+    def __init__(self, response):
+        self.response = response
 
 
 DEMO_CAMERA_FEEDS: list[dict[str, Any]] = []
@@ -276,14 +224,6 @@ def all_camera_feeds() -> list[dict[str, Any]]:
     return [*DEMO_CAMERA_FEEDS, *virtual_camera_feeds()]
 
 
-try:
-    persisted_state = load_state()
-except Exception:
-    persisted_state = None
-if persisted_state is not None:
-    simulation.SIMULATOR.state = persisted_state
-
-
 @app.get("/")
 def root():
     if DIST_DIR.exists():
@@ -296,16 +236,10 @@ def root():
 
 
 @app.get("/health/db")
-def health_db() -> dict:
+def health_db():
     health = database_health()
-    health["startup_error"] = DB_INIT_ERROR
-    health["security"] = {
-        "app_secret_configured": APP_SECRET != "dev-only-change-me",
-        "custom_demo_password": DEMO_PASSWORD != "demo123",
-        "allowed_origins": ALLOWED_ORIGINS,
-        "sensor_api_key_configured": bool(SENSOR_API_KEY),
-    }
-    return health
+    ready = health["ok"] and authentication_configured()
+    return JSONResponse({**health, "ok": ready}, status_code=200 if ready else 503)
 
 
 @app.post("/auth/login")
@@ -338,17 +272,6 @@ def decision() -> dict:
         task["workflow"] = workflow.get(task["id"], {"status": "NEW", "staff_id": task.get("assigned_staff_id")})
     result["workflow"] = workflow
     return result
-
-
-@app.websocket("/ws")
-async def websocket_updates(websocket: WebSocket) -> None:
-    await HUB.connect(websocket)
-    try:
-        await websocket.send_json({"type": "connected", "message": "Smart Restaurant OS live updates enabled"})
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        HUB.disconnect(websocket)
 
 
 @app.post("/events")
@@ -496,7 +419,7 @@ def sensor_webhook(request: SensorWebhookRequest) -> dict:
 
 
 @app.get("/sensors/feed")
-def sensor_feed(limit: int = 50) -> dict:
+def sensor_feed(limit: Annotated[int, Query(ge=1, le=200)] = 50) -> dict:
     return {"events": PIPELINE.recent(limit)}
 
 
@@ -523,17 +446,18 @@ def camera_brain_status() -> dict:
 
 
 @app.post("/vision/brain/train")
-def camera_brain_train(epochs: int = 5) -> dict:
+def camera_brain_train(epochs: Annotated[int, Query(ge=1, le=10)] = 5) -> dict:
+    if not all_camera_feeds():
+        raise HTTPException(status_code=409, detail="Add a camera feed before training.")
     result = CAMERA_BRAIN.train_from_videos(all_camera_feeds(), epochs=epochs)
     audit("camera_brain_trained", {"epochs": epochs, "samples": result["profile"]["samples_seen"]}, actor="vision-brain")
     return result
 
 
 @app.post("/vision/brain/analyze-all")
-async def camera_brain_analyze_all() -> dict:
+def camera_brain_analyze_all() -> dict:
     result = CAMERA_BRAIN.analyze_all(all_camera_feeds())
     audit("camera_brain_analysis", {"status": result["status"], "people": result["total_people"]}, actor="vision-brain")
-    await HUB.broadcast({"type": "camera_brain_analysis", "analysis": result})
     return result
 
 
@@ -543,7 +467,7 @@ def orders() -> dict:
 
 
 @app.post("/orders")
-async def create_order(request: OrderRequest, x_role: str = Header(default="waiter")) -> dict:
+def create_order(request: OrderRequest, x_role: str = Header(default="waiter")) -> dict:
     simulator = get_simulator()
     validation = validate_event(simulator.state, "order_created", {"table_id": request.table_id}, role=x_role)
     if not validation.ok:
@@ -554,12 +478,13 @@ async def create_order(request: OrderRequest, x_role: str = Header(default="wait
     KITCHEN.transition(ticket.order_id, OrderStatus.SENT_TO_KITCHEN.value)
     audit("order_created", ticket.as_public(), actor=x_role)
     save_state(simulator.state)
-    await HUB.broadcast({"type": "order_created", "order": ticket.as_public()})
     return {"order": ticket.as_public(), "decision": decision()}
 
 
 @app.post("/orders/transition")
-async def transition_order(request: OrderTransitionRequest, x_role: str = Header(default="kitchen")) -> dict:
+def transition_order(request: OrderTransitionRequest, x_role: str = Header(default="kitchen")) -> dict:
+    if request.order_id not in KITCHEN.orders:
+        raise HTTPException(status_code=404, detail="Order not found.")
     ticket = KITCHEN.transition(request.order_id, request.status.value)
     simulator = get_simulator()
     if request.status == OrderStatus.FOOD_READY:
@@ -570,7 +495,6 @@ async def transition_order(request: OrderTransitionRequest, x_role: str = Header
             simulator.ingest_event("food_served", {"table_id": ticket.table_id})
     audit("order_transition", ticket.as_public(), actor=x_role)
     save_state(simulator.state)
-    await HUB.broadcast({"type": "order_transition", "order": ticket.as_public()})
     return {"order": ticket.as_public(), "decision": decision()}
 
 
@@ -607,12 +531,12 @@ def shift_report() -> dict:
 
 
 @app.post("/model/train-simulated")
-def train_simulated(rows: int = 900) -> dict:
+def train_simulated(rows: Annotated[int, Query(ge=100, le=5000)] = 900) -> dict:
     return RISK_MODEL.train_on_simulation(rows=rows)
 
 
 @app.get("/audit")
-def audit_log(limit: int = 80) -> dict:
+def audit_log(limit: Annotated[int, Query(ge=1, le=200)] = 80) -> dict:
     return {"events": recent_audit(limit)}
 
 
@@ -752,7 +676,7 @@ def run_scenario(request: ScenarioRequest) -> dict:
 
 
 @app.post("/tick")
-def tick(minutes: float = 1.0) -> dict:
+def tick(minutes: Annotated[float, Query(gt=0, le=60)] = 1.0) -> dict:
     simulator = get_simulator()
     result = simulator.tick(minutes)
     result["prediction"] = RISK_MODEL.predict(simulator.state)
@@ -775,15 +699,35 @@ def reset() -> dict:
     from simulation import RestaurantSimulator
 
     simulation.SIMULATOR = RestaurantSimulator(seed=8)
+    KITCHEN.__init__()
     audit("system_reset", {}, actor="manager")
     save_state(simulation.SIMULATOR.state)
     return {"status": "reset", "state": asdict(simulation.SIMULATOR.state)}
 
 
+@app.get("/dashboard")
+def dashboard_snapshot() -> dict:
+    """One consistent snapshot for the UI instead of twelve parallel requests."""
+    return {
+        "state": state(),
+        "decision": decision(),
+        "sensorFeed": sensor_feed(),
+        "modelStatus": model_status(),
+        "connectors": connectors(),
+        "audit": audit_log(),
+        "staffing": staffing_recommendation(),
+        "cameraFeeds": camera_feeds(),
+        "cameraBrain": camera_brain_status(),
+        "orders": orders(),
+        "sla": sla_settings()["sla"],
+        "report": shift_report(),
+    }
+
+
 if DIST_DIR.exists():
     @app.get("/{full_path:path}")
     def serve_spa(full_path: str) -> FileResponse:
-        candidate = DIST_DIR / full_path
-        if candidate.is_file():
+        candidate = (DIST_DIR / full_path).resolve()
+        if candidate.is_relative_to(DIST_DIR.resolve()) and candidate.is_file():
             return FileResponse(candidate)
         return FileResponse(DIST_DIR / "index.html")

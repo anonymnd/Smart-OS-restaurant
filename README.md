@@ -1,91 +1,95 @@
-# Smart Restaurant Operating System MVP
+# Smart Restaurant OS
 
-This MVP is a real-time restaurant operations decision engine, not a passive monitor.
-It simulates IoT inputs, maintains a digital twin, computes prioritized work, assigns tasks
-to the nearest available staff member, and explains every decision.
+A restaurant operations prototype with a React workspace, FastAPI API,
+PostgreSQL persistence, task prioritization, kitchen tickets, and camera tools.
 
-The main product UI is now a React app with authentication, a command center,
-digital twin, task queue, staff tablet mode, analytics, event simulator, and settings.
+## Development
 
-## What is included
+Use Node.js 24 and Python 3.12. Install dependencies:
 
-- `models.py` - restaurant digital twin, table state machine, clients, staff, tasks, zones
-- `decision_engine.py` - priority scoring, task generation, staff assignment, risk detection, metrics
-- `simulation.py` - entrance camera, table-zone camera, customer progression, staff events
-- `backend.py` - FastAPI event ingestion and decision API
-- `src/` - React high-fidelity operating app
-- `dashboard.py` - legacy Streamlit prototype dashboard
-
-## Run
-
-Install backend dependencies:
-
-```bash
-pip install -r requirements.txt
+```sh
+npm ci
+python -m pip install -r requirements.txt
 ```
 
-Install frontend dependencies:
+Copy `.env.example` to `.env`, fill in your own values, and start the API:
 
-```bash
-npm install
+```sh
+uvicorn backend:app --reload --env-file .env
 ```
 
-Start the backend:
+Start the frontend in another terminal:
 
-```bash
-uvicorn backend:app --reload
+```sh
+npm run dev
 ```
 
-Start the React app in a second terminal:
+Open `http://127.0.0.1:5173`. Sign in with your email, the configured
+`DEMO_PASSWORD`, and a workspace role. With no database URL, local development
+uses SQLite. Local API documentation is available at `/docs`.
 
-```bash
-npm run dev -- --port 5173
+## Structure
+
+- `src/pages/`: workspace screens
+- `src/components/`: shared controls, navigation, and sign-in
+- `src/hooks/useRestaurant.js`: server state, mutations, and refresh
+- `src/lib/`: API transport, sessions, navigation, and display helpers
+- `backend.py`: HTTP routes and request boundary
+- `auth.py`, `config.py`: authentication and environment configuration
+- `runtime_state.py`: restaurant state restoration and persistence
+- `ops_store.py`: database transactions and queries
+- `models.py`, `simulation.py`, `decision_engine.py`: restaurant domain logic
+- `pos_kitchen.py`: kitchen tickets
+- `ai_pipeline.py`, `cv_adapter.py`, `multi_camera_brain.py`: sensor and camera models
+
+## Vercel
+
+Import the repository as a Vite project. `vercel.json` builds the frontend
+from source and deploys `api/index.py` as a Python function. `dist/` is generated
+at build time and is not committed.
+
+Configure these variables in the deployment environment:
+
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | PostgreSQL transaction-pooler URI, with an encoded password and `sslmode=require` |
+| `APP_SECRET` | Random session-signing secret of at least 32 characters |
+| `DEMO_PASSWORD` | Private workspace password; production rejects the development default |
+| `ALLOWED_ORIGINS` | Comma-separated frontend origins when using a separate API host |
+| `SENSOR_API_KEY` | Private key for external sensor webhooks |
+
+The frontend uses the same origin in production. Set `VITE_API_URL` only when
+hosting the API separately. Browser-exposed `VITE_*` variables must never contain
+secrets. For a non-Vercel production host, also set `APP_ENV=production`.
+
+`/health/db` returns readiness without connection details. Data endpoints require
+a signed session. Production disables interactive API documentation. The UI
+refreshes one `/dashboard` snapshot every five seconds while visible; it does not
+require a persistent connection. Each request restores the latest database state
+and commits under a transaction lock so separate workers share one restaurant.
+PostgreSQL is required on Vercel; ephemeral SQLite is never used as a fallback.
+
+## Verification
+
+```sh
+npm run lint
+npm test
+npm run build
+python -m pip install -r requirements-test.txt
+python -m unittest discover -s tests -v
 ```
 
-Open:
+Backend tests use an isolated temporary SQLite database. Set `TEST_DATABASE_URL`
+to a disposable PostgreSQL database to run the same suite against PostgreSQL.
+CI runs both. Never point the test suite at production.
 
-```text
-http://127.0.0.1:5173
-```
+## Prototype boundaries
 
-Optional legacy Streamlit dashboard:
+Sign-in uses a shared workspace password and selectable demonstration roles.
+It is not an individual staff-account system. Device-camera object detection
+runs in the browser; URL-based camera metadata and risk scoring are simulations.
+The interface labels those modes. A real venue needs individual identities and
+actual sensor integrations before operational use.
 
-```bash
-streamlit run dashboard.py
-```
-
-## API examples
-
-Create an entrance-camera event:
-
-```bash
-curl -X POST http://127.0.0.1:8000/events ^
-  -H "Content-Type: application/json" ^
-  -d "{\"event_type\":\"entrance_camera\",\"payload\":{\"group_size\":4}}"
-```
-
-Advance simulation time:
-
-```bash
-curl -X POST "http://127.0.0.1:8000/tick?minutes=5"
-```
-
-Read current decision plan:
-
-```bash
-curl http://127.0.0.1:8000/decision
-```
-
-## Decision model
-
-The engine uses an explainable weighted score:
-
-```text
-priority = W1 * waiting_time
-         + W2 * group_size
-         + W3 * stage_urgency
-         + W4 * time_since_last_action
-         + W5 * congestion_factor
-```
-
-Tasks are then assigned to the nearest available staff member to minimize walking distance.
+The optional legacy Streamlit dashboard has separate dependencies in
+`requirements-dashboard.txt` and is not included in the web deployment.

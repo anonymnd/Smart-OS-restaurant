@@ -59,6 +59,42 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: wait;
+  opacity: .65;
+}
+
+:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 4px;
+}
+
+.skip-link {
+  position: fixed;
+  top: -80px;
+  left: 16px;
+  z-index: 100;
+  padding: 12px 20px;
+  background: white;
+  color: #111827;
+}
+
+.skip-link:focus { top: 12px; }
+
+.workspace-content {
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.simulation-tools { grid-column: 1 / -1; }
+.simulation-tools summary { cursor: pointer; font-weight: 700; padding: 8px 0; }
+.camera-tools summary { cursor: pointer; font-weight: 700; padding: 8px 0; }
+.error-banner span { flex: 1; }
+.error-banner button { flex-shrink: 0; }
+.connection-state { max-width: 640px; margin: 40px auto; text-align: center; }
+
 .auth-shell {
   min-height: 100vh;
   display: grid;
@@ -309,6 +345,10 @@ button {
 }
 
 .sidebar {
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  overflow-y: auto;
   background: #121826;
   color: #dbe4f0;
   padding: 20px 16px;
@@ -387,7 +427,7 @@ button {
 
 .main-shell {
   min-width: 0;
-  padding: 22px;
+  padding: 28px;
 }
 
 .topbar {
@@ -1515,7 +1555,7 @@ th {
   }
 
   .brand div:last-child,
-  .nav-item {
+  .nav-item span {
     font-size: 0;
   }
 
@@ -1570,6 +1610,7 @@ th {
     top: 0;
     z-index: 10;
     display: block;
+    height: auto;
     padding: 10px;
   }
 
@@ -1585,6 +1626,17 @@ th {
 
   .nav-item {
     min-width: 48px;
+  }
+
+  .nav-item span {
+    font-size: 12px;
+  }
+
+  .nav-item {
+    flex-direction: column;
+    gap: 4px;
+    min-width: 72px;
+    min-height: 56px;
   }
 
   .main-shell {
@@ -1622,5 +1674,14 @@ th {
   .layout-editor,
   .scenario-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
   }
 }
